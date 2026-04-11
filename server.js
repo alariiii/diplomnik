@@ -408,6 +408,32 @@ app.post('/api/edit-document', authenticateToken, apiLimiter, async (req, res) =
   }
 });
 
+// Эндпоинт для скачивания готового документа
+app.get('/api/documents/:id/download', authenticateToken, async (req, res) => {
+  try {
+    const document = await prisma.document.findUnique({
+      where: { id: req.params.id }
+    });
+
+    if (!document || document.userId !== req.user.userId) {
+      return res.status(404).json({ error: 'Документ не найден' });
+    }
+    if (!document.content) {
+      return res.status(400).json({ error: 'Документ еще не сгенерирован полностью' });
+    }
+
+    const docxBuffer = await generateGostDocx(document.content);
+    const safeFileName = (document.topic || 'Проект').substring(0, 30).replace(/[^a-zа-я0-9]/gi, '_');
+
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(safeFileName)}.docx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.send(docxBuffer);
+  } catch (error) {
+    console.error('Ошибка при скачивании:', error);
+    res.status(500).json({ error: 'Ошибка сервера при формировании файла' });
+  }
+});
+
 // --- Раздача статических файлов фронтенда ---
 // Указываем Express отдавать статические файлы из папки сборки React
 app.use(express.static(path.join(__dirname, 'dist')));
@@ -417,6 +443,6 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-app.listen(port, () => {
+app.listen(port, '127.0.0.1', () => {
   console.log(`Бэкенд сервер успешно запущен на http://localhost:${port}`);
 });

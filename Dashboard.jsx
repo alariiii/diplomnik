@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { 
   BrainCircuit, FileText, Settings, History, Upload, Play, LogOut, ChevronDown,
-  User, Info, Menu, X, ChevronRight, Sparkles, Clock, Zap, CheckCircle2, Download, LogIn
+  User, Info, Menu, X, ChevronRight, Sparkles, Clock, Zap, CheckCircle2, Download, LogIn,
+  ChevronLeft, Edit3
 } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+// Используем относительный путь для продакшена (запросы будут идти на текущий домен)
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 // --- Компоненты отдельных страниц ---
 
@@ -51,7 +53,7 @@ const WelcomePage = ({ navigate }) => (
   </div>
 );
 
-const HistoryPage = ({ documents, token, navigate, onOpenPayment, onContinueGeneration }) => {
+const HistoryPage = ({ documents, token, navigate, onOpenProject }) => {
   const workTypeLabels = {
     'coursework': 'Курсовая',
     'vkr': 'ВКР / Диплом',
@@ -86,11 +88,12 @@ const HistoryPage = ({ documents, token, navigate, onOpenPayment, onContinueGene
                   <th className="px-6 py-4 font-medium">Тип</th>
                   <th className="px-6 py-4 font-medium">Дата создания</th>
                   <th className="px-6 py-4 font-medium">Статус</th>
+                  <th className="px-6 py-4 font-medium"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {documents.map((doc) => (
-                  <tr key={doc.id} className="hover:bg-slate-800/50 transition-colors">
+                  <tr key={doc.id} onClick={() => onOpenProject(doc)} className="hover:bg-slate-800/50 transition-colors cursor-pointer group">
                     <td className="px-6 py-4 font-medium text-slate-200 max-w-xs truncate" title={doc.topic}>{doc.topic}</td>
                     <td className="px-6 py-4"><span className="px-2.5 py-1 bg-slate-800 rounded-md text-xs">{workTypeLabels[doc.workType] || doc.workType}</span></td>
                     <td className="px-6 py-4 text-slate-400">
@@ -98,11 +101,14 @@ const HistoryPage = ({ documents, token, navigate, onOpenPayment, onContinueGene
                     </td>
                     <td className="px-6 py-4">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${
-                        doc.status === 'completed' || doc.status === 'preview' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 
-                        doc.status === 'generating' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : 'bg-slate-500/10 border-slate-500/20 text-slate-400'
+                        doc.status === 'completed' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 
+                        doc.status === 'preview' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : doc.status === 'generating' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400' : 'bg-slate-500/10 border-slate-500/20 text-slate-400'
                       }`}>
                         {doc.status === 'completed' ? 'Готово' : doc.status === 'preview' ? 'Превью' : doc.status === 'generating' ? 'Генерация...' : 'Ошибка'}
                       </span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <ChevronRight className="w-5 h-5 text-slate-600 group-hover:text-indigo-400 transition-colors inline-block" />
                     </td>
                   </tr>
                 ))}
@@ -216,6 +222,179 @@ const AboutPage = () => (
   </div>
 );
 
+const ProjectView = ({ project, token, navigate, onOpenPayment, onContinueGeneration }) => {
+  const [editPrompt, setEditPrompt] = useState('');
+  const [isEditing, setIsEditing] = useState(false);
+  const [editMessage, setEditMessage] = useState({ type: '', text: '' });
+
+  if (!project) {
+    return (
+      <div className="text-center py-20 animate-in fade-in">
+        <p className="text-slate-400 mb-4">Проект не найден или сессия обновлена.</p>
+        <button onClick={() => navigate('history')} className="text-indigo-400 hover:text-indigo-300">Вернуться к истории</button>
+      </div>
+    );
+  }
+
+  let parsedOutline = null;
+  try { parsedOutline = typeof project.outline === 'string' ? JSON.parse(project.outline) : project.outline; } catch(e) {}
+
+  const handleDownload = async () => {
+    if (!token) return alert('Для скачивания необходимо войти в аккаунт');
+    try {
+      const res = await fetch(`${API_URL}/api/documents/${project.id}/download`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Ошибка при скачивании документа');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${project.topic.substring(0, 30)}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleEdit = async () => {
+    if (!editPrompt.trim()) return;
+    setIsEditing(true);
+    setEditMessage({ type: '', text: '' });
+    try {
+      const res = await fetch(`${API_URL}/api/edit-document`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ documentId: project.id, editPrompt })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setEditMessage({ type: 'success', text: data.message });
+        setEditPrompt('');
+      } else {
+        setEditMessage({ type: 'error', text: data.error + (data.reason ? `: ${data.reason}` : '') });
+      }
+    } catch (err) {
+      setEditMessage({ type: 'error', text: 'Ошибка соединения с сервером' });
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-6 animate-in fade-in duration-500">
+      <button onClick={() => navigate('history')} className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors mb-4">
+        <ChevronLeft className="w-5 h-5" /> Назад к истории
+      </button>
+
+      <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800 rounded-3xl p-6 md:p-10 shadow-2xl">
+        <div className="flex flex-col md:flex-row justify-between items-start gap-4 mb-8 border-b border-slate-800 pb-6">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold text-white mb-3">{project.topic}</h1>
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <span className="px-3 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-lg font-medium">{project.workType}</span>
+              <span className="text-slate-500 flex items-center gap-1"><Clock className="w-4 h-4"/> {new Date(project.createdAt).toLocaleDateString('ru-RU')}</span>
+              <span className={`px-3 py-1 rounded-lg border font-medium ${
+                project.status === 'completed' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' :
+                project.status === 'preview' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' :
+                'bg-slate-500/10 border-slate-500/20 text-slate-400'
+              }`}>
+                {project.status === 'completed' ? 'Готово' : project.status === 'preview' ? 'Превью (Ожидает оплаты)' : 'В процессе / Ошибка'}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex gap-3 w-full md:w-auto shrink-0">
+            {project.status === 'preview' && !project.isPaid && (
+              <button onClick={() => onOpenPayment(project)} className="flex-1 md:flex-none px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-bold rounded-xl transition-all shadow-[0_0_15px_rgba(16,185,129,0.2)] flex items-center justify-center gap-2">
+                <Zap className="w-4 h-4" /> Оплатить
+              </button>
+            )}
+            {project.status === 'completed' && (
+              <button onClick={handleDownload} className="flex-1 md:flex-none px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2">
+                <Download className="w-4 h-4" /> Скачать .docx
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-6">
+            {project.content ? (
+              <div>
+                <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><FileText className="w-5 h-5 text-indigo-400"/> Текст работы</h3>
+                <div className="prose prose-invert max-w-none text-slate-300 whitespace-pre-wrap text-sm leading-relaxed bg-[#0F1423] p-6 rounded-2xl border border-slate-800 max-h-[600px] overflow-y-auto">
+                  {project.content}
+                </div>
+              </div>
+            ) : parsedOutline ? (
+              <div>
+                <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><FileText className="w-5 h-5 text-indigo-400"/> План работы</h3>
+                <div className="bg-[#0F1423] p-6 rounded-2xl border border-slate-800 space-y-4">
+                  <div>
+                    <h4 className="font-bold text-slate-200">Введение</h4>
+                    <p className="text-slate-400 text-sm mt-1">{parsedOutline.introduction}</p>
+                  </div>
+                  {parsedOutline.chapters && parsedOutline.chapters.map((ch, i) => (
+                    <div key={i} className="pt-4 border-t border-slate-800/50">
+                      <h4 className="font-bold text-indigo-300">Глава {i + 1}. {ch.title}</h4>
+                      <ul className="list-disc list-inside text-slate-400 text-sm mt-2 space-y-1">
+                        {ch.subsections && ch.subsections.map((sub, j) => <li key={j}>{sub}</li>)}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+                {project.status !== 'completed' && (project.status !== 'preview' || project.isPaid) && (
+                  <button onClick={() => onContinueGeneration(project)} className="mt-6 px-6 py-3 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-600/30 font-bold rounded-xl transition-all flex items-center gap-2 w-full justify-center">
+                    <Play className="w-5 h-5" /> Продолжить генерацию текста
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="text-slate-500 bg-[#0F1423] p-6 rounded-2xl border border-slate-800 text-center">Содержимое отсутствует.</p>
+            )}
+          </div>
+
+          <div className="space-y-6">
+            <div className="bg-[#0F1423] p-6 rounded-2xl border border-slate-800">
+              <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Edit3 className="w-5 h-5 text-amber-400"/> Внести правки (ИИ)</h3>
+              <p className="text-xs text-slate-400 mb-4">Опишите, что нужно изменить в работе, и ИИ перепишет нужные части.</p>
+              
+              <textarea
+                value={editPrompt}
+                onChange={(e) => setEditPrompt(e.target.value)}
+                placeholder="Например: Добавь больше статистики в главу 2..."
+                className="w-full bg-[#05070A] border border-slate-700 rounded-xl px-4 py-3 text-slate-200 text-sm focus:outline-none focus:border-indigo-500 h-28 resize-none mb-3"
+              />
+              
+              {editMessage.text && (
+                <div className={`p-3 rounded-xl text-xs font-medium mb-3 ${editMessage.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                  {editMessage.text}
+                </div>
+              )}
+
+              <button
+                onClick={handleEdit}
+                disabled={isEditing || !editPrompt.trim() || project.status !== 'completed'}
+                className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 font-medium rounded-xl transition-colors text-sm flex items-center justify-center gap-2 border border-slate-700"
+              >
+                {isEditing ? <BrainCircuit className="w-4 h-4 animate-pulse" /> : <Sparkles className="w-4 h-4" />}
+                {isEditing ? 'Обработка...' : 'Применить правки'}
+              </button>
+              {project.status !== 'completed' && (
+                 <p className="text-[10px] text-slate-500 mt-3 text-center">Доступно только для готовых работ.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Основной компонент ---
 
 const Dashboard = () => {
@@ -249,10 +428,16 @@ const Dashboard = () => {
   const [currentRoute, setCurrentRoute] = useState('welcome');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [documents, setDocuments] = useState([]);
+  const [activeProject, setActiveProject] = useState(null);
 
   const navigate = (route) => {
     setCurrentRoute(route);
     setIsMobileMenuOpen(false);
+  };
+
+  const handleOpenProject = (doc) => {
+    setActiveProject(doc);
+    navigate('project');
   };
 
   // Декодируем email из токена для профиля
@@ -455,28 +640,65 @@ const Dashboard = () => {
   const renderGenerator = () => {
     // Если план получен, но генерация текста еще не началась, показываем окно утверждения
     if (generatedOutline && !isGenerating && !generatedText) {
+      const updateOutline = (updates) => setGeneratedOutline(prev => ({ ...prev, ...updates }));
+      const updateChapter = (index, updates) => setGeneratedOutline(prev => {
+        const newChapters = [...prev.chapters];
+        newChapters[index] = { ...newChapters[index], ...updates };
+        return { ...prev, chapters: newChapters };
+      });
+      const updateSubsection = (chapterIndex, subIndex, text) => setGeneratedOutline(prev => {
+        const newChapters = [...prev.chapters];
+        const newSubsections = [...newChapters[chapterIndex].subsections];
+        newSubsections[subIndex] = text;
+        newChapters[chapterIndex] = { ...newChapters[chapterIndex], subsections: newSubsections };
+        return { ...prev, chapters: newChapters };
+      });
+
       return (
         <div className="max-w-3xl mx-auto relative z-10 animate-in fade-in duration-500">
           <h1 className="text-3xl font-bold mb-2">Утверждение плана работы</h1>
-          <p className="text-slate-400 mb-8">Внимательно ознакомьтесь с предложенной структурой. Если план вас устраивает, подтвердите его для начала генерации текста.</p>
+          <p className="text-slate-400 mb-8">Внимательно ознакомьтесь с предложенной структурой. <strong>Вы можете отредактировать любой пункт вручную.</strong> Если план вас устраивает, подтвердите его для начала генерации текста.</p>
           
           <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800 rounded-3xl p-6 md:p-10 shadow-2xl">
             <h2 className="text-xl font-bold mb-4 text-white">Введение</h2>
-            <p className="text-slate-300 mb-8 leading-relaxed">{generatedOutline.introduction}</p>
+            <textarea
+              value={generatedOutline.introduction || ''}
+              onChange={(e) => updateOutline({ introduction: e.target.value })}
+              className="w-full bg-[#05070A] border border-slate-700 rounded-xl px-4 py-3 text-slate-300 text-sm focus:outline-none focus:border-indigo-500 min-h-[100px] mb-8 resize-y"
+            />
 
             {generatedOutline.chapters && generatedOutline.chapters.map((ch, i) => (
               <div key={i} className="mb-8">
-                <h3 className="text-lg font-bold text-indigo-400 mb-3">Глава {i + 1}. {ch.title}</h3>
-                <ul className="list-disc list-inside text-slate-300 space-y-2">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-lg font-bold text-indigo-400 whitespace-nowrap">Глава {i + 1}.</span>
+                  <input
+                    type="text"
+                    value={ch.title || ''}
+                    onChange={(e) => updateChapter(i, { title: e.target.value })}
+                    className="flex-1 bg-[#05070A] border border-slate-700 rounded-lg px-3 py-1.5 text-indigo-400 font-bold focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div className="space-y-3 pl-2">
                   {ch.subsections && ch.subsections.map((sub, j) => (
-                    <li key={j} className="pl-2">{sub}</li>
+                    <div key={j} className="flex items-start gap-2">
+                      <span className="text-slate-500 mt-2">•</span>
+                      <textarea
+                        value={sub || ''}
+                        onChange={(e) => updateSubsection(i, j, e.target.value)}
+                        className="flex-1 bg-[#05070A] border border-slate-700 rounded-lg px-3 py-2 text-slate-300 text-sm focus:outline-none focus:border-indigo-500 min-h-[60px] resize-y"
+                      />
+                    </div>
                   ))}
-                </ul>
+                </div>
               </div>
             ))}
 
             <h2 className="text-xl font-bold mb-4 mt-8 text-white">Заключение</h2>
-            <p className="text-slate-300 mb-10 leading-relaxed">{generatedOutline.conclusion}</p>
+            <textarea
+              value={generatedOutline.conclusion || ''}
+              onChange={(e) => updateOutline({ conclusion: e.target.value })}
+              className="w-full bg-[#05070A] border border-slate-700 rounded-xl px-4 py-3 text-slate-300 text-sm focus:outline-none focus:border-indigo-500 min-h-[100px] mb-10 resize-y"
+            />
 
             <div className="flex flex-col sm:flex-row gap-4 pt-6 border-t border-slate-800">
               <button onClick={handleConfirmGeneration} className="flex-1 py-4 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] text-lg">
@@ -605,6 +827,9 @@ const Dashboard = () => {
       if (res.ok) {
         setPromoMessage({ type: 'success', text: data.message });
         setDocuments(docs => docs.map(d => d.id === docToPay.id ? { ...d, isPaid: true } : d));
+        if (activeProject && activeProject.id === docToPay.id) {
+          setActiveProject(prev => ({ ...prev, isPaid: true }));
+        }
         setTimeout(() => setPaymentModalOpen(false), 2000);
       } else {
         setPromoMessage({ type: 'error', text: data.error });
@@ -658,7 +883,8 @@ const Dashboard = () => {
     switch (currentRoute) {
       case 'welcome': return <WelcomePage navigate={navigate} />;
       case 'generator': return renderGenerator();
-      case 'history': return <HistoryPage documents={documents} token={token} navigate={navigate} onOpenPayment={handleOpenPayment} onContinueGeneration={handleContinueGeneration} />;
+      case 'history': return <HistoryPage documents={documents} token={token} navigate={navigate} onOpenProject={handleOpenProject} />;
+      case 'project': return <ProjectView project={activeProject} token={token} navigate={navigate} onOpenPayment={handleOpenPayment} onContinueGeneration={handleContinueGeneration} />;
       case 'profile': return <ProfilePage token={token} userEmail={userEmail} authMode={authMode} setAuthMode={setAuthMode} email={email} setEmail={setEmail} password={password} setPassword={setPassword} handleAuth={handleAuth} authError={authError} />;
       case 'about': return <AboutPage />;
       default: return <WelcomePage navigate={navigate} />;

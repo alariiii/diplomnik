@@ -1,0 +1,38 @@
+name: Deploy to Beget
+
+on:
+  push:
+    branches:
+      - main 
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Получение кода
+      uses: actions/checkout@v3
+
+    - name: Установка Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Установка пакетов
+      run: npm install
+
+    - name: Генерация Prisma
+      run: npx prisma generate
+
+    - name: Сборка проекта
+      run: npm run build
+
+    - name: Копирование файлов на Beget
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.REMOTE_HOST }}
+        username: ${{ secrets.REMOTE_USER }}
+        password: ${{ secrets.REMOTE_PASSWORD }}
+        source: "dist/*"
+        target: ${{ secrets.REMOTE_TARGET }}
+        strip_components: 1

@@ -1,0 +1,47 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main # Замените на master, если ваша основная ветка называется так
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Получение исходного кода
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Настройка Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20' # Укажите версию Node.js, которая используется на сервере
+
+      - name: 📦 Установка зависимостей и сборка фронтенда
+        run: |
+          npm install
+          npm run build
+
+      - name: 🚀 Копирование файлов на сервер (через SCP)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          # key: ${{ secrets.SSH_KEY }} # Раскомментируйте, если используете SSH-ключ вместо пароля
+          source: ".,!node_modules,!.git" # Копируем всё, кроме папок node_modules и .git
+          target: "/имя_сайта/public_html/" # <-- ⚠️ ИЗМЕНИТЕ ЭТОТ ПУТЬ НА СВОЙ
+
+      - name: 🔄 Настройка бэкенда и перезапуск (через SSH)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          script: |
+            cd /имя_сайта/public_html/ # <-- ⚠️ ИЗМЕНИТЕ ЭТОТ ПУТЬ НА СВОЙ
+            npm install --omit=dev
+            npx prisma generate
+            # Убедитесь, что PM2 установлен на сервере: npm i -g pm2
+            pm2 restart server.js || pm2 start server.js --name "diplom-gpt"
