@@ -11,12 +11,12 @@ jobs:
 
     steps:
     - name: Получение кода
-      uses: actions/checkout@v4 # Обновили до v4
+      uses: actions/checkout@v4 # 👈 Обновлено до версии 4
 
     - name: Установка Node.js
-      uses: actions/setup-node@v4 # Обновили до v4
+      uses: actions/setup-node@v4 # 👈 Обновлено до версии 4
       with:
-        node-version: '20' # Изменили 18 на 20
+        node-version: '24' # 👈 Обновлено до самой свежей версии 24
 
     - name: Установка пакетов
       run: npm install
