@@ -372,6 +372,25 @@ app.get('/api/documents/:id/download', authenticateToken, async (req, res) => {
 });
 
 // --- Раздача статических файлов фронтенда ---
+
+// Эндпоинты для SEO (robots.txt и sitemap.xml)
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain');
+  res.send(`User-agent: *\nAllow: /\n\nSitemap: https://${req.get('host')}/sitemap.xml`);
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  res.type('application/xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://${req.get('host')}/</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>`);
+});
+
 // Указываем Express отдавать статические файлы из папки сборки React
 app.use(express.static(path.join(__dirname, 'dist')));
 
