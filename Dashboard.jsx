@@ -102,9 +102,9 @@ const HistoryPage = ({ documents, token, navigate, onOpenProject }) => {
                     <td className="px-6 py-4">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${
                         doc.status === 'completed' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 
-                        doc.status === 'preview' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : doc.status === 'generating' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400' : 'bg-slate-500/10 border-slate-500/20 text-slate-400'
+                        doc.status === 'generating' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400' : 'bg-slate-500/10 border-slate-500/20 text-slate-400'
                       }`}>
-                        {doc.status === 'completed' ? 'Готово' : doc.status === 'preview' ? 'Превью' : doc.status === 'generating' ? 'Генерация...' : 'Ошибка'}
+                        {doc.status === 'completed' ? 'Готово' : doc.status === 'generating' ? 'Генерация...' : 'Ошибка'}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
@@ -222,7 +222,7 @@ const AboutPage = () => (
   </div>
 );
 
-const ProjectView = ({ project, token, navigate, onOpenPayment, onContinueGeneration }) => {
+const ProjectView = ({ project, token, navigate, onContinueGeneration }) => {
   const [editPrompt, setEditPrompt] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editMessage, setEditMessage] = useState({ type: '', text: '' });
@@ -299,20 +299,14 @@ const ProjectView = ({ project, token, navigate, onOpenPayment, onContinueGenera
               <span className="text-slate-500 flex items-center gap-1"><Clock className="w-4 h-4"/> {new Date(project.createdAt).toLocaleDateString('ru-RU')}</span>
               <span className={`px-3 py-1 rounded-lg border font-medium ${
                 project.status === 'completed' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' :
-                project.status === 'preview' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' :
                 'bg-slate-500/10 border-slate-500/20 text-slate-400'
               }`}>
-                {project.status === 'completed' ? 'Готово' : project.status === 'preview' ? 'Превью (Ожидает оплаты)' : 'В процессе / Ошибка'}
+                {project.status === 'completed' ? 'Готово' : 'В процессе / Ошибка'}
               </span>
             </div>
           </div>
 
           <div className="flex gap-3 w-full md:w-auto shrink-0">
-            {project.status === 'preview' && !project.isPaid && (
-              <button onClick={() => onOpenPayment(project)} className="flex-1 md:flex-none px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-bold rounded-xl transition-all shadow-[0_0_15px_rgba(16,185,129,0.2)] flex items-center justify-center gap-2">
-                <Zap className="w-4 h-4" /> Оплатить
-              </button>
-            )}
             {project.status === 'completed' && (
               <button onClick={handleDownload} className="flex-1 md:flex-none px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2">
                 <Download className="w-4 h-4" /> Скачать .docx
@@ -347,7 +341,7 @@ const ProjectView = ({ project, token, navigate, onOpenPayment, onContinueGenera
                     </div>
                   ))}
                 </div>
-                {project.status !== 'completed' && (project.status !== 'preview' || project.isPaid) && (
+                {project.status !== 'completed' && (
                   <button onClick={() => onContinueGeneration(project)} className="mt-6 px-6 py-3 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-600/30 font-bold rounded-xl transition-all flex items-center gap-2 w-full justify-center">
                     <Play className="w-5 h-5" /> Продолжить генерацию текста
                   </button>
@@ -416,14 +410,6 @@ const Dashboard = () => {
   const [currentDocId, setCurrentDocId] = useState(null);
   const [isGeneratingOutline, setIsGeneratingOutline] = useState(false);
   
-  // Состояния для оплаты (промокоды)
-  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
-  const [docToPay, setDocToPay] = useState(null);
-  const [promoCode, setPromoCode] = useState('');
-  const [promoMessage, setPromoMessage] = useState({ type: '', text: '' });
-  const [isApplyingPromo, setIsApplyingPromo] = useState(false);
-  const [isRedirectingToPay, setIsRedirectingToPay] = useState(false);
-
   // Состояния для навигации
   const [currentRoute, setCurrentRoute] = useState('welcome');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -623,7 +609,7 @@ const Dashboard = () => {
           topic,
           workType,
           createdAt: new Date().toISOString(),
-          status: 'preview' // Статус демо-доступа
+          status: 'completed'
         };
         const savedDocs = JSON.parse(localStorage.getItem('guestDocuments') || '[]');
         localStorage.setItem('guestDocuments', JSON.stringify([newDoc, ...savedDocs]));
@@ -802,67 +788,6 @@ const Dashboard = () => {
     );
   };
 
-  const handleOpenPayment = (doc) => {
-    if (!token) {
-      alert("Для оплаты и продолжения работы необходимо войти в аккаунт.");
-      setCurrentRoute('profile');
-      return;
-    }
-    setDocToPay(doc);
-    setPromoCode('');
-    setPromoMessage({ type: '', text: '' });
-    setPaymentModalOpen(true);
-  };
-
-  const handleApplyPromo = async () => {
-    setIsApplyingPromo(true);
-    setPromoMessage({ type: '', text: '' });
-    try {
-      const res = await fetch(`${API_URL}/api/apply-promo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ documentId: docToPay.id, promoCode })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setPromoMessage({ type: 'success', text: data.message });
-        setDocuments(docs => docs.map(d => d.id === docToPay.id ? { ...d, isPaid: true } : d));
-        if (activeProject && activeProject.id === docToPay.id) {
-          setActiveProject(prev => ({ ...prev, isPaid: true }));
-        }
-        setTimeout(() => setPaymentModalOpen(false), 2000);
-      } else {
-        setPromoMessage({ type: 'error', text: data.error });
-      }
-    } catch (err) {
-      setPromoMessage({ type: 'error', text: 'Ошибка соединения с сервером' });
-    } finally {
-      setIsApplyingPromo(false);
-    }
-  };
-
-  const handleYandexPay = async () => {
-    setIsRedirectingToPay(true);
-    setPromoMessage({ type: '', text: '' });
-    try {
-      const res = await fetch(`${API_URL}/api/create-payment`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ documentId: docToPay.id })
-      });
-      const data = await res.json();
-      if (res.ok && data.paymentUrl) {
-        window.location.href = data.paymentUrl; // Перенаправляем пользователя на страницу оплаты
-      } else {
-        setPromoMessage({ type: 'error', text: data.error || 'Ошибка при создании платежа' });
-      }
-    } catch (err) {
-      setPromoMessage({ type: 'error', text: 'Ошибка соединения с сервером' });
-    } finally {
-      setIsRedirectingToPay(false);
-    }
-  };
-
   const handleContinueGeneration = (doc) => {
     setTopic(doc.topic);
     setWorkType(doc.workType);
@@ -884,7 +809,7 @@ const Dashboard = () => {
       case 'welcome': return <WelcomePage navigate={navigate} />;
       case 'generator': return renderGenerator();
       case 'history': return <HistoryPage documents={documents} token={token} navigate={navigate} onOpenProject={handleOpenProject} />;
-      case 'project': return <ProjectView project={activeProject} token={token} navigate={navigate} onOpenPayment={handleOpenPayment} onContinueGeneration={handleContinueGeneration} />;
+      case 'project': return <ProjectView project={activeProject} token={token} navigate={navigate} onContinueGeneration={handleContinueGeneration} />;
       case 'profile': return <ProfilePage token={token} userEmail={userEmail} authMode={authMode} setAuthMode={setAuthMode} email={email} setEmail={setEmail} password={password} setPassword={setPassword} handleAuth={handleAuth} authError={authError} />;
       case 'about': return <AboutPage />;
       default: return <WelcomePage navigate={navigate} />;
@@ -975,60 +900,6 @@ const Dashboard = () => {
       <main className="flex-1 p-4 md:p-8 lg:p-12 overflow-y-auto w-full max-w-7xl mx-auto pt-24 md:pt-8 relative z-10">
         {renderPage()}
       </main>
-
-      {/* Модальное окно оплаты / ввода промокода */}
-      {paymentModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0B0F19]/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-[#0F1423] border border-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl relative">
-            <button onClick={() => setPaymentModalOpen(false)} className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors">
-              <X className="w-6 h-6" />
-            </button>
-            <h3 className="text-2xl font-bold text-white mb-2">Оплата проекта</h3>
-            <p className="text-slate-400 mb-6">Проект: <span className="text-indigo-400 font-medium">{docToPay?.topic}</span></p>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-400 mb-2">У вас есть промокод?</label>
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    value={promoCode} 
-                    onChange={(e) => setPromoCode(e.target.value)} 
-                    placeholder="Введите код..." 
-                    className="flex-1 bg-[#05070A] border border-slate-700 rounded-xl px-4 py-3 text-slate-100 focus:outline-none focus:border-indigo-500"
-                  />
-                  <button 
-                    onClick={handleApplyPromo}
-                    disabled={!promoCode || isApplyingPromo}
-                    className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl disabled:opacity-50 transition-colors"
-                  >
-                    {isApplyingPromo ? '...' : 'Применить'}
-                  </button>
-                </div>
-              </div>
-
-              {promoMessage.text && (
-                <div className={`p-3 rounded-xl text-sm font-medium ${promoMessage.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                  {promoMessage.text}
-                </div>
-              )}
-
-              <div className="relative py-4">
-                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-800"></div></div>
-                <div className="relative flex justify-center"><span className="px-4 bg-[#0F1423] text-slate-500 text-sm">Или выберите способ оплаты</span></div>
-              </div>
-
-              <button 
-                onClick={handleYandexPay}
-                disabled={isRedirectingToPay}
-                className="w-full py-4 bg-[#FC3F1D] hover:bg-[#F0300D] text-white rounded-xl font-bold transition-colors flex items-center justify-center gap-2 shadow-lg shadow-red-500/20"
-              >
-                {isRedirectingToPay ? 'Перенаправление...' : 'Оплатить через Yandex Pay'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   );

@@ -229,46 +229,22 @@ app.post('/api/generate', optionalAuthenticateToken, apiLimiter, upload.none(), 
     const partsToGenerate = [];
     partsToGenerate.push({ type: "introduction", title: "Введение", description: outline.introduction });
     
-    // Проверяем статус оплаты документа в базе данных
-    let isPaid = false; 
-    if (documentId && documentId !== 'null') {
-      const docRecord = await prisma.document.findUnique({ where: { id: documentId } });
-      if (docRecord && docRecord.isPaid) {
-        isPaid = true;
-      }
-    }
-
     if (outline.chapters && Array.isArray(outline.chapters) && outline.chapters.length > 0) {
-      // Первая глава: разбиваем на атомарные подпункты (Демо-доступ)
-      const ch1 = outline.chapters[0];
-      if (ch1.subsections && Array.isArray(ch1.subsections)) {
-        ch1.subsections.forEach((sub, idx) => {
-          partsToGenerate.push({
-            type: "subsection",
-            title: `1.${idx + 1} ${sub}`,
-            chapterTitle: `ГЛАВА 1. ${ch1.title.toUpperCase()}`,
-            isFirstSubsection: idx === 0
-          });
-        });
-      }
-      
-      if (isPaid) {
-        // Остальные главы также разбиваем на подпункты
-        for (let i = 1; i < outline.chapters.length; i++) {
-          const ch = outline.chapters[i];
-          if (ch.subsections && Array.isArray(ch.subsections)) {
-            ch.subsections.forEach((sub, idx) => {
-              partsToGenerate.push({
-                type: "subsection",
-                title: `${i + 1}.${idx + 1} ${sub}`,
-                chapterTitle: `ГЛАВА ${i + 1}. ${ch.title.toUpperCase()}`,
-                isFirstSubsection: idx === 0
-              });
+      // Разбиваем все главы на подпункты
+      for (let i = 0; i < outline.chapters.length; i++) {
+        const ch = outline.chapters[i];
+        if (ch.subsections && Array.isArray(ch.subsections)) {
+          ch.subsections.forEach((sub, idx) => {
+            partsToGenerate.push({
+              type: "subsection",
+              title: `${i + 1}.${idx + 1} ${sub}`,
+              chapterTitle: `ГЛАВА ${i + 1}. ${ch.title.toUpperCase()}`,
+              isFirstSubsection: idx === 0
             });
-          }
+          });
         }
-        partsToGenerate.push({ type: "conclusion", title: "Заключение", description: outline.conclusion });
       }
+      partsToGenerate.push({ type: "conclusion", title: "Заключение", description: outline.conclusion });
     }
 
     res.write(`data: ${JSON.stringify({ text: '\n\n---\n**Начинаем пошаговую генерацию текста работы...**\n' })}\n\n`);
@@ -312,7 +288,7 @@ app.post('/api/generate', optionalAuthenticateToken, apiLimiter, upload.none(), 
         where: { id: documentId },
         data: { 
           content: fullDocumentText, 
-          status: isPaid ? "completed" : "preview" // Если не оплачено, ставим статус "Превью"
+          status: "completed"
         }
       });
     }
@@ -331,45 +307,6 @@ app.post('/api/generate', optionalAuthenticateToken, apiLimiter, upload.none(), 
     res.write(`data: ${JSON.stringify({ text: '\n\n**Произошла ошибка при генерации.** Пожалуйста, попробуйте позже.' })}\n\n`);
     res.write('data: [DONE]\n\n');
     res.end();
-  }
-});
-
-// Эндпоинт для применения промокода (Тестовая оплата)
-app.post('/api/apply-promo', authenticateToken, async (req, res) => {
-  try {
-    const { documentId, promoCode } = req.body;
-    
-    // Наш секретный промокод для 100% оплаты
-    if (promoCode === 'ALARIII') {
-      await prisma.document.update({
-        where: { id: documentId },
-        data: { isPaid: true }
-      });
-      return res.json({ success: true, message: 'Промокод успешно применен! Проект полностью оплачен.' });
-    }
-    
-    return res.status(400).json({ error: 'Неверный или недействительный промокод.' });
-  } catch (error) {
-    console.error('Ошибка применения промокода:', error);
-    res.status(500).json({ error: 'Ошибка сервера при проверке промокода.' });
-  }
-});
-
-// Эндпоинт для создания платежа (Yandex Pay / ЮKassa)
-app.post('/api/create-payment', authenticateToken, async (req, res) => {
-  try {
-    const { documentId } = req.body;
-    
-    // TODO: Здесь должна быть реальная интеграция с API Yandex Pay / YooKassa
-    // Пример: const payment = await yooKassa.createPayment({ amount: { value: '1490.00', currency: 'RUB' }, ... });
-    
-    // Пока возвращаем ссылку-заглушку (после интеграции замените на payment.confirmation.confirmation_url)
-    const mockPaymentUrl = "https://yoomoney.ru/checkout/payments/v2/contract?orderId=mock_order_id";
-    
-    res.json({ paymentUrl: mockPaymentUrl });
-  } catch (error) {
-    console.error('Ошибка создания платежа:', error);
-    res.status(500).json({ error: 'Ошибка сервера при создании платежа.' });
   }
 });
 
