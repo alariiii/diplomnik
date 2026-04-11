@@ -195,6 +195,14 @@ app.post('/api/generate', optionalAuthenticateToken, apiLimiter, upload.none(), 
       const updateContent = (text) => { task.content += text; };
 
       try {
+        // Обновляем статус в БД на "generating", чтобы история отображалась корректно
+        if (documentId && documentId !== 'null') {
+          await prisma.document.update({
+            where: { id: documentId },
+            data: { status: "generating" }
+          });
+        }
+
         updateContent('✅ **План работы успешно утвержден!** Начинаем процесс написания...\n');
         let fullDocumentText = `Тема: ${outline.topic || topic}\n\n# ОГЛАВЛЕНИЕ\n\n`;
 
@@ -263,6 +271,14 @@ app.post('/api/generate', optionalAuthenticateToken, apiLimiter, upload.none(), 
         console.error('Ошибка в фоновом процессе /api/generate:', error);
         task.content += '\n\n**Произошла ошибка при генерации.** Пожалуйста, попробуйте позже.';
         task.status = 'error';
+        
+        // В случае сбоя API, записываем статус ошибки в БД
+        if (documentId && documentId !== 'null') {
+          await prisma.document.update({
+            where: { id: documentId },
+            data: { status: "error" }
+          });
+        }
       }
     })(); // Запуск IIFE в фоне
 
