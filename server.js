@@ -34,6 +34,9 @@ app.use(cors({ origin: allowedOrigins }));
 app.use(cors()); // Разрешаем запросы с любых устройств в локальной сети
 app.use(express.json());
 
+// Хранилище активных задач генерации (для поллинга)
+const activeGenerations = new Map();
+
 // Настройка multer для обработки form-data (так как клиент передает файл и текстовые поля)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -165,148 +168,123 @@ app.post('/api/generate-outline', optionalAuthenticateToken, apiLimiter, upload.
   }
 });
 
-// Эндпоинт 2: Потоковая генерация текста на основе утвержденного плана
+// Эндпоинт 2: Асинхронная генерация текста на основе утвержденного плана (Поллинг)
 app.post('/api/generate', optionalAuthenticateToken, apiLimiter, upload.none(), async (req, res) => {
-  // Устанавливаем заголовки для Server-Sent Events (SSE)
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
-  let keepAliveInterval;
-
   try {
     const { topic, workType, outline: outlineStr, documentId } = req.body;
     
-    if (!topic) {
-      res.write(`data: ${JSON.stringify({ text: 'Ошибка: Тема работы не указана.\n' })}\n\n`);
-      res.write('data: [DONE]\n\n');
-      return res.end();
-    }
-
-    if (topic.length > 500) {
-      res.write(`data: ${JSON.stringify({ text: 'Ошибка: Тема работы слишком длинная (максимум 500 символов).\n' })}\n\n`);
-      res.write('data: [DONE]\n\n');
-      return res.end();
-    }
-
-    if (!outlineStr) {
-      res.write(`data: ${JSON.stringify({ text: 'Ошибка: План работы не был передан.\n' })}\n\n`);
-      res.write('data: [DONE]\n\n');
-      return res.end();
+    if (!topic || topic.length > 500 || !outlineStr) {
+      return res.status(400).json({ error: 'Некорректные входные данные (тема или план отсутствуют)' });
     }
 
     const outline = JSON.parse(outlineStr);
-
-    // 2. Форматируем JSON в красиво оформленный читаемый текст (Markdown)
-    let formattedText = `# ОГЛАВЛЕНИЕ\n\n`;
-    formattedText += `Введение\n`;
     
-    if (outline.chapters && Array.isArray(outline.chapters)) {
-      outline.chapters.forEach((chapter, index) => {
-        formattedText += `${index + 1} ${chapter.title}\n`;
-        if (chapter.subsections && Array.isArray(chapter.subsections)) {
-          chapter.subsections.forEach((sub, subIndex) => {
-            formattedText += `  ${index + 1}.${subIndex + 1} ${sub}\n`;
+    // Создаем уникальный ID задачи
+    const jobId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+    
+    // Сохраняем начальное состояние задачи в памяти
+    activeGenerations.set(jobId, { status: 'generating', content: '', file: null, fileName: '' });
+    
+    // 1. МГНОВЕННЫЙ ОТВЕТ ФРОНТЕНДУ (чтобы избежать таймаутов на хостинге)
+    res.json({ message: 'Генерация запущена', jobId });
+
+    // 2. ФОНОВЫЙ ПРОЦЕСС ГЕНЕРАЦИИ
+    (async () => {
+      const task = activeGenerations.get(jobId);
+      // Функция помощник для дозаписи текста
+      const updateContent = (text) => { task.content += text; };
+
+      try {
+        updateContent('✅ **План работы успешно утвержден!** Начинаем процесс написания...\n');
+        let fullDocumentText = `Тема: ${outline.topic || topic}\n\n# ОГЛАВЛЕНИЕ\n\n`;
+
+        updateContent('\n\n*Подбор научных источников (ожидайте, формируем базу из 30-40 достоверных материалов)...*\n\n');
+        const referencesData = await generateReferences(topic, workType);
+        const referencesArray = referencesData.references || [];
+        const referencesText = referencesArray.join('\n');
+        updateContent(`*Успешно подобрано источников: ${referencesArray.length}*\n\n`);
+
+        const partsToGenerate = [];
+        partsToGenerate.push({ type: "introduction", title: "Введение", description: outline.introduction });
+        
+        if (outline.chapters && Array.isArray(outline.chapters) && outline.chapters.length > 0) {
+          for (let i = 0; i < outline.chapters.length; i++) {
+            const ch = outline.chapters[i];
+            if (ch.subsections && Array.isArray(ch.subsections)) {
+              ch.subsections.forEach((sub, idx) => {
+                partsToGenerate.push({
+                  type: "subsection",
+                  title: `${i + 1}.${idx + 1} ${sub}`,
+                  chapterTitle: `ГЛАВА ${i + 1}. ${ch.title.toUpperCase()}`,
+                  isFirstSubsection: idx === 0
+                });
+              });
+            }
+          }
+          partsToGenerate.push({ type: "conclusion", title: "Заключение", description: outline.conclusion });
+        }
+
+        updateContent('\n\n---\n**Начинаем пошаговую генерацию текста работы...**\n');
+
+        for (const part of partsToGenerate) {
+          if (part.type === 'subsection' && part.isFirstSubsection) {
+            updateContent(`\n\n# ${part.chapterTitle}\n\n`);
+            fullDocumentText += `\n# ${part.chapterTitle}\n\n`;
+          }
+          const headingPrefix = (part.type === 'introduction' || part.type === 'conclusion') ? '# ' : '## ';
+
+          updateContent(`\n\n${headingPrefix}${part.title}\n`);
+          updateContent(`*Генерируется текст (ожидайте)...*\n\n`);
+
+          const chapterText = await generateChapterText(topic, outlineStr, part, referencesText);
+          
+          fullDocumentText += `\n${headingPrefix}${part.title}\n\n${chapterText}\n\n`;
+          updateContent(`✅ Фрагмент успешно написан.\n`);
+        }
+
+        updateContent('\n\n---\n**Генерация завершена. Формируем Word-документ (ГОСТ)...**\n');
+
+        const docxBuffer = await generateGostDocx(fullDocumentText);
+        const base64Docx = docxBuffer.toString('base64');
+
+        if (documentId && documentId !== 'null') {
+          await prisma.document.update({
+            where: { id: documentId },
+            data: { content: fullDocumentText, status: "completed" }
           });
         }
-      });
-    }
-    
-    formattedText += `\nЗаключение\n`;
 
-    // 3. Сообщаем пользователю, что план принят в работу
-    res.write(`data: ${JSON.stringify({ text: '✅ **План работы успешно утвержден!** Начинаем процесс написания...\n' })}\n\n`);
-    let fullDocumentText = `Тема: ${outline.topic || topic}\n\n# ОГЛАВЛЕНИЕ\n\n`;
+        const safeFileName = (outline.topic || topic).substring(0, 30).replace(/[^a-zа-я0-9]/gi, '_');
+        task.file = base64Docx;
+        task.fileName = `${safeFileName}.docx`;
+        task.status = 'completed'; // Фронтенд увидит этот статус при следующем опросе
 
-    // --- НОВЫЙ ШАГ: Генерация списка литературы ---
-    res.write(`data: ${JSON.stringify({ text: '\n\n*Подбор научных источников (ожидайте, формируем базу из 30-40 достоверных материалов)...*\n\n' })}\n\n`);
-    const referencesData = await generateReferences(topic, workType);
-    const referencesArray = referencesData.references || [];
-    const referencesText = referencesArray.join('\n');
-    res.write(`data: ${JSON.stringify({ text: `*Успешно подобрано источников: ${referencesArray.length}*\n\n` })}\n\n`);
-
-    // 4. Подготавливаем массив всех частей для полной генерации
-    const partsToGenerate = [];
-    partsToGenerate.push({ type: "introduction", title: "Введение", description: outline.introduction });
-    
-    if (outline.chapters && Array.isArray(outline.chapters) && outline.chapters.length > 0) {
-      // Разбиваем все главы на подпункты
-      for (let i = 0; i < outline.chapters.length; i++) {
-        const ch = outline.chapters[i];
-        if (ch.subsections && Array.isArray(ch.subsections)) {
-          ch.subsections.forEach((sub, idx) => {
-            partsToGenerate.push({
-              type: "subsection",
-              title: `${i + 1}.${idx + 1} ${sub}`,
-              chapterTitle: `ГЛАВА ${i + 1}. ${ch.title.toUpperCase()}`,
-              isFirstSubsection: idx === 0
-            });
-          });
-        }
+      } catch (error) {
+        console.error('Ошибка в фоновом процессе /api/generate:', error);
+        task.content += '\n\n**Произошла ошибка при генерации.** Пожалуйста, попробуйте позже.';
+        task.status = 'error';
       }
-      partsToGenerate.push({ type: "conclusion", title: "Заключение", description: outline.conclusion });
-    }
-
-    res.write(`data: ${JSON.stringify({ text: '\n\n---\n**Начинаем пошаговую генерацию текста работы...**\n' })}\n\n`);
-
-    // Запускаем ping каждые 10 секунд, чтобы соединение не оборвалось по таймауту
-    keepAliveInterval = setInterval(() => {
-      res.write(': keep-alive\n\n');
-    }, 10000);
-
-    // 5. Генерируем каждый АТОМАРНЫЙ кусок и стримим клиенту
-    for (const part of partsToGenerate) {
-      // Если это первый подраздел новой главы, сначала выводим Заголовок 1 уровня (Название главы)
-      if (part.type === 'subsection' && part.isFirstSubsection) {
-        res.write(`data: ${JSON.stringify({ text: `\n\n# ${part.chapterTitle}\n\n` })}\n\n`);
-        fullDocumentText += `\n# ${part.chapterTitle}\n\n`;
-      }
-
-      // Определяем уровень заголовка: Введение/Заключение - # (1 уровень), Подразделы - ## (2/3 уровень)
-      const headingPrefix = (part.type === 'introduction' || part.type === 'conclusion') ? '# ' : '## ';
-
-      res.write(`data: ${JSON.stringify({ text: `\n\n${headingPrefix}${part.title}\n` })}\n\n`);
-      res.write(`data: ${JSON.stringify({ text: `*Генерируется текст (ожидайте)...*\n\n` })}\n\n`);
-
-      const chapterText = await generateChapterText(topic, outlineStr, part, referencesText);
-      
-      fullDocumentText += `\n${headingPrefix}${part.title}\n\n${chapterText}\n\n`;
-      res.write(`data: ${JSON.stringify({ text: `✅ Фрагмент успешно написан.\n` })}\n\n`);
-    }
-
-    if (keepAliveInterval) clearInterval(keepAliveInterval);
-
-    res.write(`data: ${JSON.stringify({ text: '\n\n---\n**Генерация завершена. Формируем Word-документ (ГОСТ)...**\n' })}\n\n`);
-
-    // 6. Формируем docx документ и конвертируем в Base64
-    const docxBuffer = await generateGostDocx(fullDocumentText);
-    const base64Docx = docxBuffer.toString('base64');
-
-    // Обновляем документ в БД после успешной генерации
-    if (documentId && documentId !== 'null') {
-      await prisma.document.update({
-        where: { id: documentId },
-        data: { 
-          content: fullDocumentText, 
-          status: "completed"
-        }
-      });
-    }
-
-    // 7. Отправляем специальное SSE сообщение с файлом для скачивания
-    const safeFileName = (outline.topic || topic).substring(0, 30).replace(/[^a-zа-я0-9]/gi, '_');
-    res.write(`data: ${JSON.stringify({ file: base64Docx, fileName: `${safeFileName}.docx` })}\n\n`);
-
-    // Завершаем стрим
-    res.write('data: [DONE]\n\n');
-    res.end();
+    })(); // Запуск IIFE в фоне
 
   } catch (error) {
-    if (keepAliveInterval) clearInterval(keepAliveInterval);
-    console.error('Ошибка в эндпоинте /api/generate:', error);
-    res.write(`data: ${JSON.stringify({ text: '\n\n**Произошла ошибка при генерации.** Пожалуйста, попробуйте позже.' })}\n\n`);
-    res.write('data: [DONE]\n\n');
-    res.end();
+    console.error('Ошибка запуска /api/generate:', error);
+    res.status(500).json({ error: 'Ошибка сервера при запуске генерации' });
+  }
+});
+
+// Эндпоинт для проверки статуса (Поллинг)
+app.get('/api/generation-status/:jobId', optionalAuthenticateToken, (req, res) => {
+  const task = activeGenerations.get(req.params.jobId);
+  if (!task) {
+    return res.status(404).json({ error: 'Задача генерации не найдена или устарела' });
+  }
+  
+  res.json(task);
+
+  // Очистка памяти: удаляем задачу через 5 минут после её завершения
+  if ((task.status === 'completed' || task.status === 'error') && !task.deleteScheduled) {
+    task.deleteScheduled = true;
+    setTimeout(() => activeGenerations.delete(req.params.jobId), 5 * 60 * 1000);
   }
 });
 

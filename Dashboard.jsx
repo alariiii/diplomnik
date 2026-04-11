@@ -531,7 +531,7 @@ const Dashboard = () => {
     }
   };
 
-  // ЭТАП 2: Подтверждение плана и потоковая генерация
+  // ЭТАП 2: Подтверждение плана и асинхронная генерация (Поллинг)
   const handleConfirmGeneration = async () => {
     setIsGenerating(true);
     setGeneratedText('');
@@ -543,8 +543,7 @@ const Dashboard = () => {
       formData.append('outline', JSON.stringify(generatedOutline));
       if (currentDocId) formData.append('documentId', currentDocId);
     
-
-      // Отправляем POST запрос и читаем ответ как Stream
+      // 1. Отправляем быстрый запрос на запуск
       const response = await fetch(`${API_URL}/api/generate`, {
         method: 'POST',
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
@@ -553,71 +552,81 @@ const Dashboard = () => {
 
       if (response.status === 401 || response.status === 403) {
         handleLogout();
-        throw new Error('Сессия истекла. Пожалуйста, войдите заново.');
+        setIsGenerating(false);
+        return alert('Сессия истекла. Пожалуйста, войдите заново.');
       }
       
-      if (!response.ok) throw new Error('Ошибка сервера. Возможно, слишком много запросов.');
+      if (!response.ok) {
+        setIsGenerating(false);
+        return alert('Ошибка сервера при запуске генерации.');
+      }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let done = false;
+      const { jobId } = await response.json();
 
-      while (!done) {
-        const { value, done: readerDone } = await reader.read();
-        done = readerDone;
-        
-        if (value) {
-          const chunk = decoder.decode(value, { stream: true });
-          // Парсим формат Server-Sent Events (SSE): "data: {...}\n\n"
-          const lines = chunk.split('\n');
+      // 2. Начинаем поллинг (опрос статуса) каждые 3 секунды
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${API_URL}/api/generation-status/${jobId}`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+          });
           
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6);
-              if (data.trim() === '[DONE]') break;
-              
-              try {
-                const parsed = JSON.parse(data);
+          if (!statusRes.ok) return; // Игнорируем случайные сбои сети
 
-                // Перехват специального события: Сервер прислал готовый docx
-                if (parsed.file) {
-                  const link = document.createElement('a');
-                  link.href = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${parsed.file}`;
-                  link.download = parsed.fileName || 'Работа.docx';
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                  setGeneratedText((prev) => prev + '\n\n✅ Документ успешно сгенерирован и автоматически скачан!');
-                  continue;
-                }
+          const data = await statusRes.json();
+          setGeneratedText(data.content); // Обновляем текст на экране
 
-                const text = parsed.text || parsed.content || ''; // Поддержка форматов OpenAI и кастомных
-                setGeneratedText((prev) => prev + text);
-              } catch {
-                // Fallback, если сервер шлет обычный текст, а не JSON
-                setGeneratedText((prev) => prev + data.replace(/\\n/g, '\n'));
+          if (data.status === 'completed') {
+            clearInterval(pollInterval);
+            setIsGenerating(false);
+
+            // Скачивание готового файла
+            if (data.file) {
+              const byteCharacters = atob(data.file);
+              const byteNumbers = new Array(byteCharacters.length);
+              for (let i = 0; i < byteCharacters.length; i++) {
+                  byteNumbers[i] = byteCharacters.charCodeAt(i);
               }
+              const byteArray = new Uint8Array(byteNumbers);
+              const blob = new Blob([byteArray], { 
+                  type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
+              });
+              const blobUrl = window.URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = blobUrl;
+              link.download = data.fileName || 'Работа.docx';
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              window.URL.revokeObjectURL(blobUrl);
+              
+              setGeneratedText((prev) => prev + '\n\n✅ Документ успешно сгенерирован и автоматически скачан!');
             }
-          }
-        }
-      }
 
-      // Если гость, сохраняем "превью" в LocalStorage
-      if (!token) {
-        const newDoc = {
-          id: 'guest_' + Date.now(),
-          topic,
-          workType,
-          createdAt: new Date().toISOString(),
-          status: 'completed'
-        };
-        const savedDocs = JSON.parse(localStorage.getItem('guestDocuments') || '[]');
-        localStorage.setItem('guestDocuments', JSON.stringify([newDoc, ...savedDocs]));
-      }
+            // Сохранение для гостя
+            if (!token) {
+              const newDoc = {
+                id: 'guest_' + Date.now(),
+                topic,
+                workType,
+                createdAt: new Date().toISOString(),
+                status: 'completed'
+              };
+              const savedDocs = JSON.parse(localStorage.getItem('guestDocuments') || '[]');
+              localStorage.setItem('guestDocuments', JSON.stringify([newDoc, ...savedDocs]));
+            }
+          } else if (data.status === 'error') {
+            clearInterval(pollInterval);
+            setIsGenerating(false);
+            setGeneratedText((prev) => prev + '\n\n❌ Ошибка генерации.');
+          }
+        } catch (pollErr) {
+          console.error('Ошибка при поллинге:', pollErr);
+        }
+      }, 3000);
+
     } catch (error) {
       console.error('Ошибка генерации:', error);
       setGeneratedText((prev) => prev + '\n\n[Произошла ошибка при соединении с сервером]');
-    } finally {
       setIsGenerating(false);
     }
   };
