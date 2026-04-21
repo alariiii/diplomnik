@@ -702,10 +702,14 @@ const Dashboard = () => {
             />
 
             <div className="flex flex-col sm:flex-row gap-4 pt-6 border-t border-slate-800">
-              <button onClick={handleConfirmGeneration} className="flex-1 py-4 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] text-lg">
-                Утвердить и написать работу
+              <button 
+                onClick={handleConfirmGeneration} 
+                disabled={isGenerating}
+                className={`flex-1 py-4 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-bold rounded-xl transition-all text-lg ${isGenerating ? 'opacity-50 cursor-not-allowed' : 'shadow-[0_0_20px_rgba(16,185,129,0.3)]'}`}
+              >
+                {isGenerating ? 'Генерация...' : 'Утвердить и написать работу'}
               </button>
-              <button onClick={() => setGeneratedOutline(null)} className="px-6 py-4 bg-slate-800/50 hover:bg-slate-800 border border-slate-700 text-slate-300 font-medium rounded-xl transition-colors">
+              <button onClick={() => setGeneratedOutline(null)} disabled={isGenerating} className={`px-6 py-4 bg-slate-800/50 border border-slate-700 text-slate-300 font-medium rounded-xl transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-800'}`}>
                 Изменить тему
               </button>
             </div>

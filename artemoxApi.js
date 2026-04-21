@@ -62,6 +62,10 @@ export const generateOutline = async (topic, workType = 'ВКР') => {
     }
 
     const data = await response.json();
+    if (!data.choices || !data.choices[0]) {
+      throw new Error(`Некорректный ответ ИИ (план): ${JSON.stringify(data)}`);
+    }
+    
     const content = data.choices[0].message.content.trim();
     
     // Пытаемся извлечь JSON с помощью регулярного выражения
@@ -146,10 +150,15 @@ ${partTaskDescription}`;
     });
 
     if (!response.ok) {
-      throw new Error(`Ошибка API Artemox при генерации главы: ${response.status}`);
+      const errText = await response.text();
+      throw new Error(`Ошибка API Artemox при генерации главы: ${response.status} - ${errText}`);
     }
 
     const data = await response.json();
+    if (!data.choices || !data.choices[0]) {
+      throw new Error(`Некорректный ответ ИИ (глава): ${JSON.stringify(data)}`);
+    }
+    
     return data.choices[0].message.content.trim();
   } catch (error) {
     console.error("Ошибка при генерации текста главы:", error);
@@ -193,7 +202,12 @@ export const checkTopicDeviation = async (originalTopic, editPrompt) => {
       })
     });
 
+    if (!response.ok) {
+      throw new Error(`Ошибка проверки темы: ${response.status}`);
+    }
+
     const data = await response.json();
+    if (!data.choices || !data.choices[0]) throw new Error("Нет данных от ИИ");
     const content = data.choices[0].message.content.trim();
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     return JSON.parse(jsonMatch ? jsonMatch[0] : '{"isValid": true, "reason": ""}');
@@ -243,7 +257,13 @@ export const generateReferences = async (topic, workType) => {
       })
     });
 
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Ошибка API (литература): ${response.status} - ${errText}`);
+    }
+
     const data = await response.json();
+    if (!data.choices || !data.choices[0]) throw new Error("Нет данных от ИИ");
     const content = data.choices[0].message.content.trim();
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     const cleanJson = jsonMatch ? jsonMatch[0] : '{"references": []}';
