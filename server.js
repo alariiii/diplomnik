@@ -23,6 +23,8 @@ const __dirname = path.dirname(__filename);
 const adapter = new PrismaBetterSqlite3({ url: process.env.DATABASE_URL });
 
 const app = express();
+
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const port = process.env.PORT || 5000;
 const prisma = new PrismaClient({
   adapter,
@@ -244,6 +246,8 @@ app.post('/api/generate', optionalAuthenticateToken, apiLimiter, upload.none(), 
 
           updateContent(`\n\n${headingPrefix}${part.title}\n`);
           updateContent(`*Генерируется текст (ожидайте)...*\n\n`);
+
+          await delay(4000);
 
           const chapterText = await generateChapterText(topic, outlineStr, part, referencesText);
           
