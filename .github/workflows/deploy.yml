@@ -33,6 +33,5 @@ jobs:
         host: ${{ secrets.REMOTE_HOST }}
         username: ${{ secrets.REMOTE_USER }}
         password: ${{ secrets.REMOTE_PASSWORD }}
-        source: "dist/*"
+        source: "dist,server.js,artemoxApi.js,docxGenerator.js,yandexDisk.js,package.json,prisma/"
         target: ${{ secrets.REMOTE_TARGET }}
-        strip_components: 1
