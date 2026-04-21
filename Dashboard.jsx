@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   BrainCircuit, FileText, Settings, History, Upload, Play, LogOut, ChevronDown,
-  User, Info, Menu, X, ChevronRight, Sparkles, Clock, Zap, CheckCircle2, Download, LogIn,
+  User, Info, Menu, X, ChevronRight, Sparkles, Clock, Zap, CheckCircle2, Download, LogIn, Cloud,
   ChevronLeft, Edit3
 } from 'lucide-react';
 
@@ -312,6 +312,11 @@ const ProjectView = ({ project, token, navigate, onContinueGeneration }) => {
                 <Download className="w-4 h-4" /> Скачать .docx
               </button>
             )}
+            {project.yandexDiskUrl && (
+              <a href={project.yandexDiskUrl} target="_blank" rel="noopener noreferrer" className="flex-1 md:flex-none px-5 py-2.5 bg-[#FFCC00] hover:bg-[#F2C200] text-black font-bold rounded-xl transition-all flex items-center justify-center gap-2">
+                <Cloud className="w-4 h-4" /> Яндекс Диск
+              </a>
+            )}
           </div>
         </div>
 
@@ -608,6 +613,7 @@ const Dashboard = () => {
                 id: 'guest_' + Date.now(),
                 topic,
                 workType,
+                yandexDiskUrl: data.yandexDiskUrl,
                 createdAt: new Date().toISOString(),
                 status: 'completed'
               };

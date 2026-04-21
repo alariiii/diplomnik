@@ -25,5 +25,6 @@ model Document {
   isPaid    Boolean  @default(false)
   content   String?
   status    String   @default("generating")
+  yandexDiskUrl String?
   createdAt DateTime @default(now())
 }

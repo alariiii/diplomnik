@@ -11,6 +11,7 @@ import pkg from '@prisma/client';
 const { PrismaClient } = pkg;
 import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import path from 'path';
+import { uploadAndGetLink } from './yandexDisk.js';
 import { fileURLToPath } from 'url';
 
 // Гарантируем наличие DATABASE_URL в памяти процесса до первого запроса Prisma
@@ -183,7 +184,7 @@ app.post('/api/generate', optionalAuthenticateToken, apiLimiter, upload.none(), 
     const jobId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
     
     // Сохраняем начальное состояние задачи в памяти
-    activeGenerations.set(jobId, { status: 'generating', content: '', file: null, fileName: '' });
+    activeGenerations.set(jobId, { status: 'generating', content: '', file: null, fileName: '', yandexDiskUrl: null });
     
     // 1. МГНОВЕННЫЙ ОТВЕТ ФРОНТЕНДУ (чтобы избежать таймаутов на хостинге)
     res.json({ message: 'Генерация запущена', jobId });
@@ -254,11 +255,27 @@ app.post('/api/generate', optionalAuthenticateToken, apiLimiter, upload.none(), 
 
         const docxBuffer = await generateGostDocx(fullDocumentText);
         const base64Docx = docxBuffer.toString('base64');
+        
+        let yandexDiskUrl = null;
+        if (process.env.YANDEX_DISK_TOKEN) {
+          updateContent('\n\n*Загрузка документа в облако Яндекс Диск...*\n');
+          try {
+            const safeFileName = (outline.topic || topic).substring(0, 30).replace(/[^a-zа-я0-9]/gi, '_');
+            const fileName = `${safeFileName}_${Date.now()}.docx`;
+            const folderPath = `diplomnik_files/${documentId && documentId !== 'null' ? documentId : 'guests'}`;
+            yandexDiskUrl = await uploadAndGetLink(folderPath, fileName, docxBuffer);
+            task.yandexDiskUrl = yandexDiskUrl;
+            updateContent(`✅ Документ успешно сохранен в облако: ${yandexDiskUrl}\n`);
+          } catch (uploadError) {
+            console.error('Ошибка загрузки на Яндекс.Диск:', uploadError);
+            updateContent(`❌ Ошибка загрузки в облако, но файл сгенерирован локально.\n`);
+          }
+        }
 
         if (documentId && documentId !== 'null') {
           await prisma.document.update({
             where: { id: documentId },
-            data: { content: fullDocumentText, status: "completed" }
+            data: { content: fullDocumentText, status: "completed", yandexDiskUrl }
           });
         }
 
